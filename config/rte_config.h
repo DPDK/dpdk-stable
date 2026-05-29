@@ -136,4 +136,9 @@
 /* DLB2 defines */
 // RTE_LIBRTE_PMD_DLB2_QUELL_STATS is not set
 
+/* Xilinx QDMA configs */
+#define RTE_MAX_ETHPORTS 256
+#define RTE_MAX_QUEUES_PER_PORT 4096
+#define RTE_LIBRTE_QDMA_DEBUG_DRIVER 1
+
 #endif /* _RTE_CONFIG_H_ */

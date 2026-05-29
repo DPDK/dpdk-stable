@@ -30,6 +30,10 @@ cavium_fpa = {'Class': '08', 'Vendor': '177d', 'Device': 'a053',
               'SVendor': None, 'SDevice': None}
 cavium_pkx = {'Class': '08', 'Vendor': '177d', 'Device': 'a0dd,a049',
               'SVendor': None, 'SDevice': None}
+xilinx_qdma_pf = {'Class':  '05', 'Vendor': '10ee', 'Device': '5900',
+				'SVendor': None, 'SDevice': None}
+xilinx_qdma_vf = {'Class':  '05', 'Vendor': '10ee', 'Device': '5901',
+				'SVendor': None, 'SDevice': None}
 cavium_tim = {'Class': '08', 'Vendor': '177d', 'Device': 'a051',
               'SVendor': None, 'SDevice': None}
 cavium_zip = {'Class': '12', 'Vendor': '177d', 'Device': 'a037',
@@ -78,7 +82,7 @@ virtio_blk = {'Class': '01', 'Vendor': "1af4", 'Device': '1001,1042',
 cnxk_ml = {'Class': '08', 'Vendor': '177d', 'Device': 'a092',
             'SVendor': None, 'SDevice': None}
 
-network_devices = [network_class, cavium_pkx, avp_vnic, ifpga_class]
+network_devices = [network_class, cavium_pkx, xilinx_qdma_pf, xilinx_qdma_vf, avp_vnic, ifpga_class]
 baseband_devices = [acceleration_class]
 crypto_devices = [encryption_class, intel_processor_class]
 dma_devices = [cnxk_dma, hisilicon_dma,

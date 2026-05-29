@@ -50,6 +50,7 @@ drivers = [
         'octeon_ep',
         'pcap',
         'pfe',
+        'qdma',
         'qede',
         'ring',
         'sfc',
