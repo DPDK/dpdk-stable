@@ -33,6 +33,8 @@ cflags += ['-DRTE_LIBRTE_QDMA_PMD']
 cflags += ['-DDMA_BRAM_SIZE=524288']
 cflags += ['-DTHROUGHPUT_MEASUREMENT']
 cflags += ['-DLATENCY_MEASUREMENT']
+cflags += ['-DEQDMA_CPM5_VF_GT_256Q_SUPPORTED']
+cflags += ['-DEQDMA_CPM5_10BIT_TAG_ENABLE']
 
 # Use QDMA_DPDK_23_11 compiler flag for DPDK v23.11
 # Use QDMA_DPDK_22_11 compiler flag for DPDK v22.11
