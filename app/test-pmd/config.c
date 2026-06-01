@@ -59,6 +59,8 @@
 #include "testpmd.h"
 #include "cmdline_mtr.h"
 
+#include <ethdev_driver.h>
+
 #define ETHDEV_FWVERS_LEN 32
 
 #ifdef CLOCK_MONOTONIC_RAW /* Defined in glibc bits/time.h */
