@@ -1,3 +1,0 @@
-[submodule "dpdk-kmods"]
-	path = dpdk-kmods
-	url = https://dpdk.org/git/dpdk-kmods
