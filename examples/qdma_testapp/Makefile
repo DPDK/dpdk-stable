@@ -67,6 +67,7 @@ PKGCONF ?= pkg-config
 
 CFLAGS += -DBRAM_SIZE=$(BRAM_SIZE)
 CFLAGS += -DDPDK=1
+CFLAGS += -DPERF_BENCHMARK
 
 # Add flag to allow experimental API as qdma_testapp uses rte_ethdev_set_ptype API
 CFLAGS += -DALLOW_EXPERIMENTAL_API

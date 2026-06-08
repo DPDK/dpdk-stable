@@ -62,20 +62,7 @@
 #define MP_CACHE_SZ     512
 #define MBUF_POOL_NAME_PORT   "mbuf_pool_%d"
 
-/* AXI Master Lite bar(user bar) registers */
-#define C2H_ST_QID_REG    0x0
-#define C2H_ST_LEN_REG    0x4
-#define C2H_CONTROL_REG              0x8
-#define ST_LOOPBACK_EN               0x1
-#define ST_C2H_START_VAL             0x2
-#define ST_C2H_IMMEDIATE_DATA_EN     0x4
-#define C2H_CONTROL_REG_MASK         0xF
-#define H2C_CONTROL_REG    0xC
-#define H2C_STATUS_REG    0x10
-#define C2H_PACKET_COUNT_REG    0x20
-#define C2H_STATUS_REG                    0x18
-#define C2H_STREAM_MARKER_PKT_GEN_VAL     0x22
-#define MARKER_RESPONSE_COMPLETION_BIT    0x1
+#include "cnic_user_ctrl_regs.h"
 
 extern int num_ports;
 

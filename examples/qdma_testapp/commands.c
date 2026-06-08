@@ -114,6 +114,7 @@
 #include <rte_string_fns.h>
 #include <rte_ethdev.h>
 #include <fcntl.h>
+#include <time.h>
 
 #include "parse_obj_list.h"
 #include "pcierw.h"
@@ -124,6 +125,47 @@
 
 #define ALIGN_TO_WORD_BYTES                  (4)
 #define NUMERICAL_BASE_HEXADECIMAL       (16)
+#define NSEC_PER_SEC                       1000000000L
+#define BW_GB_DIV                          1000000000.0
+#define BW_MB_DIV                          1000000.0
+#define BW_KB_DIV                          1000.0
+
+/* Match linux-kernel dma-to/from-device (dma_xfer_utils.c) throughput print */
+static void timespec_sub(struct timespec *t1, const struct timespec *t2)
+{
+	t1->tv_sec -= t2->tv_sec;
+	t1->tv_nsec -= t2->tv_nsec;
+	if (t1->tv_nsec >= NSEC_PER_SEC) {
+		t1->tv_sec++;
+		t1->tv_nsec -= NSEC_PER_SEC;
+	} else if (t1->tv_nsec < 0) {
+		t1->tv_sec--;
+		t1->tv_nsec += NSEC_PER_SEC;
+	}
+}
+
+static void qdma_print_average_bw(uint64_t size, const struct timespec *ts_start,
+		const struct timespec *ts_end)
+{
+	struct timespec ts = *ts_end;
+	double elapsed;
+	double result;
+
+	timespec_sub(&ts, ts_start);
+	elapsed = (double)ts.tv_sec + ((double)ts.tv_nsec / (double)NSEC_PER_SEC);
+	if (elapsed <= 0.0)
+		return;
+	result = (double)size / elapsed;
+	printf("size=%lu ", size);
+	if (result >= BW_GB_DIV)
+		printf("Average BW = %f GB/sec\n", result / BW_GB_DIV);
+	else if (result >= BW_MB_DIV)
+		printf("Average BW = %f MB/sec\n", result / BW_MB_DIV);
+	else if (result >= BW_KB_DIV)
+		printf("Average BW = %f KB/sec\n", result / BW_KB_DIV);
+	else
+		printf("Average BW = %f Bytes/sec\n", result);
+}
 
 /* Command help */
 struct cmd_help_result {
@@ -164,6 +206,8 @@ static void cmd_help_parsed(__attribute__((unused)) void *parsed_result,
 						"<output-filename> "
 			"<src_addr> <size> <iterations>  "
 			":To Receive\n"
+			"\tdelay                <seconds>  "
+			":Sleep (e.g. loopback settle)\n"
 			"\treg_dump             <port-id>  "
 			":To dump all the valid registers\n"
 			"\treg_info_read        <port-id> <reg-addr> <num-regs> "
@@ -659,7 +703,11 @@ static void cmd_obj_dma_to_device_parsed(void *parsed_result,
 		user_bar_idx = pinfo[port_id].user_bar_idx;
 
 #if !defined(TANDEM_BOOT_SUPPORTED)
+#if QDMA_USER_CTRL_ST_IP_LOOPBACK
+		regval = ST_LOOPBACK_EN;
+#else
 		regval = PciRead(user_bar_idx, C2H_CONTROL_REG, port_id);
+#endif
 #endif
 
 		input_size = atoi(res->size);
@@ -699,9 +747,12 @@ static void cmd_obj_dma_to_device_parsed(void *parsed_result,
 			size = input_size / num_queues;
 
 		do {
+			struct timespec ts_start, ts_end;
+
 			total_size = input_size;
 			dst_addr = strtoull(res->dst_addr, &p, 0);
 			q_data_size = 0;
+			clock_gettime(CLOCK_MONOTONIC, &ts_start);
 			/* transmit data on the number of Queues configured
 			 * from the input file
 			 */
@@ -782,6 +833,9 @@ static void cmd_obj_dma_to_device_parsed(void *parsed_result,
 					return;
 				}
 			}
+			clock_gettime(CLOCK_MONOTONIC, &ts_end);
+			qdma_print_average_bw((uint64_t)input_size, &ts_start,
+					&ts_end);
 			++loop;
 		} while (loop < num_loops);
 		close(ifd);
@@ -919,12 +973,13 @@ static void cmd_obj_dma_from_device_parsed(void *parsed_result,
 			size = input_size / num_queues;
 
 		do {
+			struct timespec ts_start, ts_end;
+
 			total_size = input_size;
 			src_addr = atoi(res->src_addr);
 			q_data_size = 0;
-			/* Transmit data on the number of Queues configured
-			 * from the input file
-			 */
+			clock_gettime(CLOCK_MONOTONIC, &ts_start);
+			/* Receive on configured queues */
 			for (i = 0, j = 0; i < num_queues; i++, j++) {
 				src_addr += q_data_size;
 				src_addr %= BRAM_SIZE;
@@ -1008,12 +1063,17 @@ static void cmd_obj_dma_from_device_parsed(void *parsed_result,
 					return;
 				}
 			}
+			clock_gettime(CLOCK_MONOTONIC, &ts_end);
+			if (ret >= 0)
+				qdma_print_average_bw((uint64_t)input_size,
+						&ts_start, &ts_end);
 			++loop;
 		} while (loop < num_loops);
 		close(ofd);
 	}
-	cmdline_printf(cl, "\n####### DMA transfer from device is completed "
-						"successfully #######\n");
+	if (ret >= 0)
+		cmdline_printf(cl, "\n####### DMA transfer from device is "
+				"completed successfully #######\n");
 }
 
 cmdline_parse_token_string_t cmd_obj_action_dma_from_device =
@@ -1503,6 +1563,40 @@ cmdline_parse_inst_t cmd_obj_load_cmds = {
 
 };
 
+/* delay <seconds> — same role as sleep in test_pf_vf.sh before C2H */
+struct cmd_obj_delay_result {
+	cmdline_fixed_string_t action;
+	cmdline_fixed_string_t seconds;
+};
+
+static void cmd_obj_delay_parsed(void *parsed_result, struct cmdline *cl,
+		__attribute__((unused)) void *data)
+{
+	struct cmd_obj_delay_result *res = parsed_result;
+	unsigned int sec = (unsigned int)atoi(res->seconds);
+
+	cmdline_printf(cl,
+		"Waiting for hardware loopback buffer...\n");
+	if (sec > 0)
+		sleep(sec);
+}
+
+cmdline_parse_token_string_t cmd_obj_action_delay =
+	TOKEN_STRING_INITIALIZER(struct cmd_obj_delay_result, action, "delay");
+cmdline_parse_token_string_t cmd_obj_delay_seconds =
+	TOKEN_STRING_INITIALIZER(struct cmd_obj_delay_result, seconds, NULL);
+
+cmdline_parse_inst_t cmd_obj_delay = {
+	.f = cmd_obj_delay_parsed,
+	.data = NULL,
+	.help_str = "delay seconds",
+	.tokens = {
+		(void *)&cmd_obj_action_delay,
+		(void *)&cmd_obj_delay_seconds,
+		NULL,
+	},
+};
+
 /* CONTEXT (list of instruction) */
 
 cmdline_parse_ctx_t main_ctx[] = {
@@ -1514,6 +1608,7 @@ cmdline_parse_ctx_t main_ctx[] = {
 	(cmdline_parse_inst_t *)&cmd_obj_reg_write,
 	(cmdline_parse_inst_t *)&cmd_obj_dma_to_device,
 	(cmdline_parse_inst_t *)&cmd_obj_dma_from_device,
+	(cmdline_parse_inst_t *)&cmd_obj_delay,
 	(cmdline_parse_inst_t *)&cmd_obj_reg_dump,
 	(cmdline_parse_inst_t *)&cmd_obj_reg_info_read,
 	(cmdline_parse_inst_t *)&cmd_obj_queue_dump,

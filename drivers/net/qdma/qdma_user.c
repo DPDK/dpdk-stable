@@ -63,7 +63,7 @@ int qdma_ul_extract_st_cmpt_info(void *ul_cmpt_entry, void *cmpt_info)
 		return -1;
 
 	cmpt_data->data = cmpt_desc->data;
-	if (unlikely(!cmpt_desc->desc_used))
+	if (unlikely(!cmpt_desc->desc_used && !cmpt_desc->length))
 		cmpt_data->length = 0;
 
 	return 0;

@@ -132,7 +132,10 @@ static int qdma_extract_st_cmpt_info(void *ul_cmpt_entry, void *cmpt_info)
 	cmpt_data = (union qdma_ul_st_cmpt_ring *)(cmpt_info);
 
 	cmpt_data->data = cmpt_desc->data;
-	if (unlikely(!cmpt_desc->desc_used))
+	/* desc_used=0 with length=0: immediate-data completion (no C2H desc).
+	 * CNIC / custom designs may leave desc_used clear while length is valid.
+	 */
+	if (unlikely(!cmpt_desc->desc_used && !cmpt_desc->length))
 		cmpt_data->length = 0;
 
 	return 0;

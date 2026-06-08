@@ -177,6 +177,65 @@ int do_recv_mm(int port_id, int fd, int queueid, int ld_size, int tot_num_desc)
 	return ret;
 }
 
+#if QDMA_USER_CTRL_ST_IP_LOOPBACK
+/*
+ * CNIC QDMA ST IP loopback: one blocking-style read (like kernel read() on
+ * /dev/qdmac4000-ST-*). Accumulate bytes until input_size; do not use the
+ * Xilinx user-BAR packet-count / multi-packet split.
+ */
+static int do_recv_st_ip_loopback(int port_id, int fd, int queueid,
+		int input_size)
+{
+	struct rte_mbuf *pkts[NUM_RX_PKTS] = { NULL };
+	unsigned int bytes_recv = 0, total_pkts = 0, retries;
+	uint16_t nb_rx, i;
+	int ret = 0;
+
+	retries = QDMA_CNIC_ST_LOOPBACK_RX_RETRIES;
+
+	while (bytes_recv < (unsigned int)input_size && retries--) {
+		nb_rx = rte_eth_rx_burst(port_id, queueid, pkts, NUM_RX_PKTS);
+		if (nb_rx == 0) {
+			rte_delay_us(QDMA_CNIC_ST_LOOPBACK_RX_DELAY_US);
+			continue;
+		}
+
+		for (i = 0; i < nb_rx; i++) {
+			struct rte_mbuf *mb = pkts[i];
+
+			while (mb != NULL) {
+				uint16_t seg_len = rte_pktmbuf_data_len(mb);
+				ssize_t w;
+
+				if (seg_len) {
+					w = write(fd, rte_pktmbuf_mtod(mb, void *),
+							seg_len);
+					if (w > 0)
+						bytes_recv += (unsigned int)w;
+				}
+				mb = mb->next;
+			}
+			rte_pktmbuf_free(pkts[i]);
+			total_pkts++;
+		}
+	}
+
+	if (input_size && bytes_recv < (unsigned int)input_size) {
+		printf("ERROR: CNIC ST loopback: expected %d bytes, got %u "
+				"(pkts=%u, queue=%d)\n",
+				input_size, bytes_recv, total_pkts, queueid);
+		ret = -1;
+	} else {
+		printf("DMA received number of packets: %u, bytes: %u, "
+				"on queue-id:%d\n",
+				total_pkts, bytes_recv, queueid);
+	}
+
+	fsync(fd);
+	return ret;
+}
+#endif
+
 int do_recv_st(int port_id, int fd, int queueid, int input_size)
 {
 	struct rte_mbuf *pkts[NUM_RX_PKTS] = { NULL };
@@ -216,7 +275,15 @@ int do_recv_st(int port_id, int fd, int queueid, int input_size)
 	}
 #endif //DUMP_MEMPOOL_USAGE_STATS
 
+#if QDMA_USER_CTRL_ST_IP_LOOPBACK
+	ret = do_recv_st_ip_loopback(port_id, fd, queueid, input_size);
+	rte_spinlock_unlock(&pinfo[port_id].port_update_lock);
+	return ret;
+#endif
+
 	user_bar_idx = pinfo[port_id].user_bar_idx;
+
+#if !QDMA_USER_CTRL_ST_IP_LOOPBACK
 	PciWrite(user_bar_idx, C2H_ST_QID_REG, (queueid + qbase), port_id);
 
 	reg_val = PciRead(user_bar_idx, C2H_CONTROL_REG, port_id);
@@ -243,8 +310,9 @@ int do_recv_st(int port_id, int fd, int queueid, int input_size)
 		 */
 		max_completion_size = pinfo[port_id].buff_size;
 	}
+#endif
 
-	/* Calculate number of packets to receive and programming AXI Master Lite bar(user bar) */
+	/* Calculate number of packets to receive */
 	if (input_size == 0) /* zerobyte support uses one descriptor */
 		num_pkts = 1;
 	else if (input_size % max_completion_size != 0) {
@@ -258,6 +326,7 @@ int do_recv_st(int port_id, int fd, int queueid, int input_size)
 		only_pkt = 1;
 	}
 
+#if !QDMA_USER_CTRL_ST_IP_LOOPBACK
 	if (!loopback_en) {
 		PciWrite(user_bar_idx, C2H_PACKET_COUNT_REG, num_pkts, port_id);
 
@@ -282,6 +351,7 @@ int do_recv_st(int port_id, int fd, int queueid, int input_size)
 		printf("BAR-%d is the QDMA C2H number of packets:0x%x,\n",
 				user_bar_idx, regval);
 	}
+#endif
 
 	while (num_pkts) {
 		if (num_pkts > NUM_RX_PKTS)
@@ -294,6 +364,7 @@ int do_recv_st(int port_id, int fd, int queueid, int input_size)
 		if ((only_pkt == 1) && (last_pkt_size))
 			last_pkt_size = 0;
 
+#if !QDMA_USER_CTRL_ST_IP_LOOPBACK
 		 /* Immediate data Enabled*/
 		if ((reg_val & ST_C2H_IMMEDIATE_DATA_EN)) {
 			/* payload received is zero for the immediate data case.
@@ -325,7 +396,9 @@ int do_recv_st(int port_id, int fd, int queueid, int input_size)
 					&pinfo[port_id].port_update_lock);
 				return -1;
 			}
-		} else {
+		} else
+#endif
+		{
 			/* try to receive RX_BURST_SZ packets */
 
 			nb_rx = rte_eth_rx_burst(port_id, queueid, pkts,
@@ -392,6 +465,7 @@ int do_recv_st(int port_id, int fd, int queueid, int input_size)
 		total_rcv_pkts += num_pkts_recv;
 		if ((num_pkts == 0) && last_pkt_size) {
 			num_pkts = 1;
+#if !QDMA_USER_CTRL_ST_IP_LOOPBACK
 			if (!loopback_en) {
 				/* Stop the C2H Engine */
 				reg_val = PciRead(user_bar_idx,
@@ -420,10 +494,12 @@ int do_recv_st(int port_id, int fd, int queueid, int input_size)
 				PciWrite(user_bar_idx, C2H_CONTROL_REG, reg_val,
 							port_id);
 			}
+#endif
 			last_pkt_size = 0;
 			continue;
 		}
 	}
+#if !QDMA_USER_CTRL_ST_IP_LOOPBACK
 	/* Stop the C2H Engine */
 	if (!loopback_en) {
 		reg_val = PciRead(user_bar_idx, C2H_CONTROL_REG, port_id);
@@ -432,6 +508,7 @@ int do_recv_st(int port_id, int fd, int queueid, int input_size)
 		PciWrite(user_bar_idx, C2H_CONTROL_REG, reg_val,
 				port_id);
 	}
+#endif
 	printf("DMA received number of packets: %u, on queue-id:%d\n",
 			total_rcv_pkts, queueid);
 	fsync(fd);
@@ -528,7 +605,7 @@ int do_xmit(int port_id, int fd, int queueid, int ld_size, int tot_num_desc,
 
 		total_tx = num_pkts;
 
-#ifndef TANDEM_BOOT_SUPPORTED
+#if !defined(TANDEM_BOOT_SUPPORTED) && !QDMA_USER_CTRL_ST_IP_LOOPBACK
 		PciWrite(user_bar_idx, C2H_ST_QID_REG, (queueid + qbase),
 				port_id);
 #endif
@@ -619,7 +696,7 @@ int do_xmit(int port_id, int fd, int queueid, int ld_size, int tot_num_desc,
 			rte_pktmbuf_free(mb[0]);
 	}
 
-#ifndef TANDEM_BOOT_SUPPORTED
+#if !defined(TANDEM_BOOT_SUPPORTED) && !QDMA_USER_CTRL_ST_IP_LOOPBACK
 	reg_val = PciRead(user_bar_idx, C2H_CONTROL_REG, port_id);
 	reg_val &= C2H_CONTROL_REG_MASK;
 	if (!(reg_val & ST_LOOPBACK_EN)) {
@@ -708,6 +785,7 @@ void port_close(int port_id)
 		return;
 	}
 
+#if !QDMA_USER_CTRL_ST_IP_LOOPBACK
 	if ((dev_attr.device_type == RTE_PMD_QDMA_DEVICE_SOFT)
 			&& (dev_attr.ip_type == RTE_PMD_EQDMA_SOFT_IP)) {
 		PciWrite(user_bar_idx, C2H_CONTROL_REG,
@@ -726,6 +804,7 @@ void port_close(int port_id)
 			retry--;
 		}
 	}
+#endif
 
 	rte_eth_dev_stop(port_id);
 
